@@ -171,6 +171,43 @@ async fn irc_sink_connect_once(
     }
 }
 
+fn irc_sink_ssl_context() -> Result<SslContext, Error> {
+    let mut builder = SslContextBuilder::new(SslMethod::tls_client())
+        .map_err(|err| Error::other(format!("error creating SSL context builder: {}", err)))?;
+
+    builder.set_mode(
+        SslMode::RELEASE_BUFFERS
+            | SslMode::AUTO_RETRY
+            | SslMode::ACCEPT_MOVING_WRITE_BUFFER
+            | SslMode::ENABLE_PARTIAL_WRITE,
+    );
+
+    builder.set_options(
+        (SslOptions::ALL | SslOptions::NO_COMPRESSION | SslOptions::NO_SSL_MASK)
+            & !SslOptions::NO_TLSV1_3,
+    );
+
+    builder
+        .set_min_proto_version(Some(SslVersion::TLS1_3))
+        .map_err(|err| {
+            Error::other(format!(
+                "error setting SSL context builder min proto version: {}",
+                err
+            ))
+        })?;
+
+    builder
+        .set_max_proto_version(Some(SslVersion::TLS1_3))
+        .map_err(|err| {
+            Error::other(format!(
+                "error setting SSL context builder max proto version: {}",
+                err
+            ))
+        })?;
+
+    Ok(builder.build())
+}
+
 async fn irc_sink_exchange<T, U>(
     receiver: &mut mpsc::Receiver<String>,
     reader: T,
@@ -263,43 +300,6 @@ where
             }
         }
     }
-}
-
-fn irc_sink_ssl_context() -> Result<SslContext, Error> {
-    let mut builder = SslContextBuilder::new(SslMethod::tls_client())
-        .map_err(|err| Error::other(format!("error creating SSL context builder: {}", err)))?;
-
-    builder.set_mode(
-        SslMode::RELEASE_BUFFERS
-            | SslMode::AUTO_RETRY
-            | SslMode::ACCEPT_MOVING_WRITE_BUFFER
-            | SslMode::ENABLE_PARTIAL_WRITE,
-    );
-
-    builder.set_options(
-        (SslOptions::ALL | SslOptions::NO_COMPRESSION | SslOptions::NO_SSL_MASK)
-            & !SslOptions::NO_TLSV1_3,
-    );
-
-    builder
-        .set_min_proto_version(Some(SslVersion::TLS1_3))
-        .map_err(|err| {
-            Error::other(format!(
-                "error setting SSL context builder min proto version: {}",
-                err
-            ))
-        })?;
-
-    builder
-        .set_max_proto_version(Some(SslVersion::TLS1_3))
-        .map_err(|err| {
-            Error::other(format!(
-                "error setting SSL context builder max proto version: {}",
-                err
-            ))
-        })?;
-
-    Ok(builder.build())
 }
 
 async fn irc_sink_log_lines<T>(lines: &mut Lines<BufReader<T>>) -> Result<(), Error>
