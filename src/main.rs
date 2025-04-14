@@ -13,6 +13,7 @@ use tokio::{
     net::TcpStream,
     runtime, select,
     signal::ctrl_c,
+    spawn,
     sync::mpsc,
     time::{sleep, sleep_until, timeout, Instant},
 };
@@ -60,13 +61,10 @@ fn main() {
     rt.block_on(async {
         let (sender, receiver) = mpsc::channel::<String>(1000);
 
+        spawn(stdin_source(sender));
+
         select! {
-            ret = stdin_source(sender) => {
-                error!("error from stdin_source(): {:?}", ret);
-            },
-            ret = irc_sink(receiver, args.irc_server, args.use_tls, args.nick, args.channel) => {
-                error!("error from irc_sink(): {:?}", ret);
-            },
+            _ = irc_sink(receiver, args.irc_server, args.use_tls, args.nick, args.channel) => {},
             ret = ctrl_c() => {
                 ret.expect("failed to listen for Ctrl-C");
 
@@ -80,31 +78,32 @@ fn main() {
     rt.shutdown_timeout(Duration::from_secs(1));
 }
 
-async fn stdin_source(sender: mpsc::Sender<String>) -> Result<(), Error> {
+async fn stdin_source(sender: mpsc::Sender<String>) {
     let mut lines = BufReader::new(stdin()).lines();
 
     loop {
         select! {
             ret = lines.next_line() => {
-                sender
-                    .send(
-                        ret.map_err(|err| {
-                            Error::other(format!("error reading line from stdin: {}", err))
-                        })?
-                        .ok_or_else(|| {
-                            Error::new(ErrorKind::UnexpectedEof, "EOF reading line from stdin")
-                        })?,
-                    )
-                    .await
-                    .map_err(|err| {
-                        Error::new(
-                            ErrorKind::BrokenPipe,
-                            format!("error writing line from stdin to output channel: {}", err),
-                        )
-                    })?;
+                match ret {
+                    Ok(Some(line)) => {
+                        if let Err(err) = sender.send(line).await {
+                            debug!(?err, "error writing line from stdin to output channel");
+                            break;
+                        }
+                    },
+                    Ok(None) => {
+                        debug!("EOF reading line from stdin");
+                        break;
+                    }
+                    Err(err) => {
+                        debug!(?err, "error reading line from stdin");
+                        break;
+                    }
+                }
             },
             _ = sender.closed() => {
-                return Err(Error::from(ErrorKind::BrokenPipe));
+                debug!("output channel closed");
+                break;
             },
         }
     }
@@ -123,7 +122,7 @@ async fn irc_sink(
     nick: String,
     channel: String,
 ) {
-    loop {
+    while !receiver.is_closed() {
         if let Err(err) =
             irc_sink_connect_once(&mut receiver, &server, use_tls, &nick, &channel).await
         {
