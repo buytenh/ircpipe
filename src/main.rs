@@ -18,7 +18,7 @@ use tokio::{
     time::{sleep, sleep_until, timeout, Instant},
 };
 use tokio_openssl::SslStream;
-use tracing::{debug, error, info};
+use tracing::{debug, info, warn};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -87,22 +87,22 @@ async fn stdin_source(sender: mpsc::Sender<String>) {
                 match ret {
                     Ok(Some(line)) => {
                         if let Err(err) = sender.send(line).await {
-                            debug!(?err, "error writing line from stdin to output channel");
+                            warn!(?err, "error writing line from stdin to output channel");
                             break;
                         }
                     },
                     Ok(None) => {
-                        debug!("EOF reading line from stdin");
+                        info!("EOF reading line from stdin");
                         break;
                     }
                     Err(err) => {
-                        debug!(?err, "error reading line from stdin");
+                        warn!(?err, "error reading line from stdin");
                         break;
                     }
                 }
             },
             _ = sender.closed() => {
-                debug!("output channel closed");
+                warn!("output channel closed");
                 break;
             },
         }
